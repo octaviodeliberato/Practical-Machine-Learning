@@ -1,0 +1,124 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Octavio Deliberato Neto"
+date: "31 de dezembro de 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, 
+                      comment = "", warning = FALSE)
+```
+
+## Executive Summary
+
+Based on a dataset provide by PUC-Rio at <http://groupware.les.inf.puc-rio.br/har>, a predictive model regarding how well 6 participants were performing barbell lifting was successfully built.
+
+Data comes from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. The "classe" target variable indicates the manner in which they did the exercise.
+
+## Getting and Preparing Data
+
+```{r}
+# Needed packages
+library(tidyverse)
+library(lessR)
+library(caret)
+library(FactoMineR)
+library(factoextra)
+library(randomForest)
+library(C50)
+# Is the file absent? If so, download the data
+filename <- "pml-training.csv"
+if (!file.exists(filename)) {
+  URL <- paste0("https://d396qusza40orc.cloudfront.net/predmachlearn/",
+               filename)
+  download.file(URL, filename, method = "curl")
+}
+# load the data
+mydata <- read.csv(filename, stringsAsFactors = FALSE)
+```
+
+Once the data is loaded, we need to get rid of unnecessary variables - identifiers - and others with a large amount of NAs:
+
+```{r}
+validcols <- colSums(is.na(mydata))/length(mydata) <= 0.05
+mydata <- mydata[, validcols]
+sum(colSums(is.na(mydata))) # check we are done with NAs
+classe <- factor(mydata$classe)
+mydata <- mydata %>% select(roll_belt:classe) %>% 
+  select_if(is.numeric)
+str(mydata)
+mydata$classe <- classe
+# ca(mydata) will generate a lot of output
+```
+
+## Dimension Reduction
+
+As the number of variables is great, let's try to pick the most important variables by means of PCA - Principal Component Analysis:
+
+```{r}
+res.pca <- PCA(subset(mydata, select = -classe), ncp = 12, graph = FALSE)
+head(res.pca$eig, 12)
+```
+
+From the PCA we see that up to PCA12 one can represent ~80% of the total variance to be explained. Analysing each component and variable up to PCA12, the following variables were chosen:
+
+```{r}
+fviz_contrib(res.pca, choice = "var", axes = 1:12)
+var.contribs <- c("roll_belt", "pitch_belt", "total_accel_belt", 
+                  "accel_belt_x", "accel_belt_y", "accel_belt_z", 
+                  "magnet_belt_x", "magnet_belt_z", "total_accel_arm", 
+                  "gyros_arm_x", "gyros_arm_y", "magnet_arm_y", 
+                  "roll_dumbbell", "pitch_dumbbell", "yaw_dumbbell", 
+                  "gyros_dumbbell_x", "gyros_dumbbell_z", 
+                  "gyros_forearm_y", "gyros_forearm_z", 
+                  "accel_forearm_y", "accel_forearm_z", "magnet_forearm_x", 
+                  "magnet_forearm_y", "magnet_forearm_z")
+mydata <- mydata[var.contribs]
+```
+
+Finally, we can still reduce the dimensionality of the dataset further by means of eliminating highly correlated variables with the aid of `caret`:
+
+```{r}
+highlyCorDescr <- findCorrelation(cor(mydata), cutoff = 0.7)
+mydata <- mydata[, -highlyCorDescr]
+mydata$classe <- classe
+names(mydata) # final set of variables
+summary(mydata) # final dataset
+```
+
+## Model Building
+
+### Random Forest
+
+```{r, cache=TRUE}
+ind.train <- createDataPartition(mydata$classe, p = 0.75, list = FALSE)
+mydata.train <- mydata[ind.train, ]
+mydata.test <- mydata[-ind.train, ]
+set.seed(300)
+rf <- randomForest(classe ~ ., mydata.train)
+rf
+rf.pred <- predict(rf, newdata = mydata.test)
+rf.acc <- confusionMatrix(rf.pred, mydata.test$classe)
+# Accuracy
+rf.acc$overall[[1]]
+```
+
+### Boosted C5.0 decision tree
+
+```{r, cache=TRUE}
+set.seed(300)
+c5 <- C5.0(classe ~ ., data = mydata.train, trials = 30)
+c5.pred <- predict(c5, newdata = mydata.test)
+c5.acc <- confusionMatrix(c5.pred, mydata.test$classe)
+# Accuracy
+c5.acc$overall[[1]]
+```
+
+The Random Forest model shows slightly better accuracy than the C5.0 boosted decision tree, but both models show very good performances. Also, the approach to reducing the dimension of the dataset proved to be effective.
+
+## Annex - Descriptive Statistics and Distributions for Selected Variables
+
+```{r}
+ca(mydata)
+```
